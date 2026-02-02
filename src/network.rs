@@ -9,16 +9,17 @@ pub struct Layer {
     pub biases: Vec<f32>,
 }
 
-/// Sigmoid activation function, that implement a standart logigistic function: 1 / (1 + e^(-z))
+/// Sigmoid: σ(z) = 1 / (1 + e^(-z)). Squashes values to (0, 1).
 fn sigmoid(z: f32) -> f32 {
     1.0 / (1.0 + (-z).exp())
 }
 
+/// σ'(z) = σ(z)(1 − σ(z)). Used in backprop to chain the gradient.
 fn sigmoid_derivative(z: f32) -> f32 {
     sigmoid(z) * (1.0 - sigmoid(z))
 }
 
-/// Computes the dot product of input and weights
+/// Sum of (input[i] * weights[i]) for one neuron's pre-activation.
 fn dot_product(input: &[f32], weights: &[f32]) -> f32 {
     input.iter().zip(weights).map(|(x, w)| x * w).sum()
 }
@@ -43,6 +44,7 @@ impl Layer {
         Self { weights, biases }
     }
 
+    /// Forward pass: for each neuron, z = w·x + b, then output = σ(z).
     pub fn calculate_output(&self, inputs: &[f32]) -> Vec<f32> {
         let mut outputs = Vec::with_capacity(self.biases.len());
         let num_neurons = self.weights.len();
@@ -79,6 +81,7 @@ impl Network {
         }
     }
 
+    /// Forward pass through all layers. Returns final layer activations (e.g. 10 class scores).
     pub fn predict(&self, input: &[f32]) -> Vec<f32> {
         let mut current_output = input.to_vec();
 
@@ -89,13 +92,14 @@ impl Network {
         current_output
     }
 
+    /// Backpropagation: compute gradients of loss w.r.t. all weights and biases.
+    /// Returns (weight_gradients, bias_gradients) for each layer. Uses MSE: (y - target)².
     pub fn backprop(
         &self,
         network_input: &[f32],
         target: &[f32],
     ) -> (Vec<Vec<Vec<f32>>>, Vec<Vec<f32>>) {
-        // --- FORWARD PASS ---
-        // Store all intermediate values for the backward pass
+        // --- FORWARD PASS: save all z (pre-activation) and a (activation) for backprop ---
         let mut all_layers_outputs = vec![network_input.to_vec()];
         let mut all_weighted_sums = vec![];
 
@@ -105,12 +109,9 @@ impl Network {
             let mut weighted_sum = Vec::new();
             let mut layer_outputs = Vec::new();
 
-            // layer.weights.len(): num of neurons in the layer
             for i in 0..layer.weights.len() {
-                // z = w * x + b
                 let z = dot_product(&current_layer_input, &layer.weights[i]) + layer.biases[i];
                 weighted_sum.push(z);
-                // a = sigmoid(z)
                 layer_outputs.push(sigmoid(z));
             }
 
@@ -120,66 +121,58 @@ impl Network {
             current_layer_input = layer_outputs;
         }
 
-        // --- BACKWARD PASS ---
-        // 1. Calculate the error (delta) for the output layer
+        // --- BACKWARD PASS: compute δ (delta) per layer ---
         let mut layers_deltas: Vec<Vec<f32>> = Vec::new();
         let last_layer_weighted_sums = all_weighted_sums.last().expect("Weighted sums exist");
         let last_layer_outputs = all_layers_outputs.last().expect("Output exist");
 
-        let mut current_delta: Vec<f32> = last_layer_outputs
+        // Output layer: δ = (y - target) * σ'(z)  [derivative of MSE + chain rule]
+        let mut current_layer_deltas: Vec<f32> = last_layer_outputs
             .iter()
             .zip(target.iter())
             .zip(last_layer_weighted_sums.iter())
             .map(|((&y, &target), &z)| (y - target) * sigmoid_derivative(z))
             .collect();
 
-        layers_deltas.push(current_delta.clone());
+        layers_deltas.push(current_layer_deltas.clone());
 
-        // loop over layers starting from last - 1 to the first
+        // Hidden layers: δ_l = (W_{l+1}^T · δ_{l+1}) * σ'(z_l). Walk from last-1 down to 0.
         for l in (0..self.layers.len() - 1).rev() {
             let mut next_delta: Vec<f32> = Vec::new();
             let current_layer_weighted_sums = &all_weighted_sums[l];
-
             let layer_to_right = &self.layers[l + 1];
 
-            // loop over layer[l] neurons
             for i in 0..self.layers[l].weights.len() {
+                // Backprop error from layer l+1: sum over next layer's neurons j
                 let mut error_signal = 0.0;
-                // loop over layer_to_rights neurons
                 for j in 0..layer_to_right.weights.len() {
-                    error_signal += layer_to_right.weights[j][i] * current_delta[j];
+                    error_signal += layer_to_right.weights[j][i] * current_layer_deltas[j];
                 }
-
                 next_delta.push(error_signal * sigmoid_derivative(current_layer_weighted_sums[i]));
             }
 
-            current_delta = next_delta.clone();
+            current_layer_deltas = next_delta.clone();
             layers_deltas.push(next_delta);
         }
 
         layers_deltas.reverse();
 
-        // CALCULATE Gradients for each neuron
+        // --- GRADIENTS: dC/dw = δ * a_in,  dC/db = δ ---
         let mut weight_gradients: Vec<Vec<Vec<f32>>> = Vec::new();
         let mut bias_gradients = Vec::new();
 
         for i in 0..self.layers.len() {
             let layer_deltas = &layers_deltas[i];
-            // This is a_in for this layer. (we started with layer 0 input training set, so for each layer
-            // layer[i] is an inputs and layer[i+1] is layer output)
-            let layer_input = &all_layers_outputs[i];
+            let layer_inputs = &all_layers_outputs[i]; // activations into this layer
 
-            // 1. Bias gradient: dC/db = delta
             bias_gradients.push(layer_deltas.clone());
 
-            // 2. Weight gradient: dC/dw = delta * a_in
             let mut layer_weight_gradients = Vec::new();
             for &delta in layer_deltas {
                 let mut neuron_weight_gradients = Vec::new();
-                for &activation in layer_input {
+                for &activation in layer_inputs {
                     neuron_weight_gradients.push(delta * activation);
                 }
-
                 layer_weight_gradients.push(neuron_weight_gradients);
             }
 
