@@ -181,4 +181,66 @@ impl Network {
 
         (weight_gradients, bias_gradients)
     }
+
+    pub fn update_mini_batch(&mut self, batch: &[(Vec<f32>, Vec<f32>)]) {
+        let mut total_grad_w: Vec<Vec<Vec<f32>>> = Vec::new();
+        let mut total_grad_b: Vec<Vec<f32>> = Vec::new();
+
+        for layer in &self.layers {
+            let zero_weights: Vec<Vec<f32>> =
+                vec![vec![0.0; layer.weights[0].len()]; layer.weights.len()];
+            total_grad_w.push(zero_weights);
+
+            let zero_biases: Vec<f32> = vec![0.0; layer.biases.len()];
+            total_grad_b.push(zero_biases);
+        }
+
+        for (input, target) in batch {
+            let (delta_grad_w, delta_grad_b) = self.backprop(input, target);
+            for l in 0..self.layers.len() {
+                total_grad_b[l]
+                    .iter_mut()
+                    .zip(&delta_grad_b[l])
+                    .for_each(|(total_b, delta_b)| {
+                        *total_b += delta_b;
+                    });
+
+                total_grad_w[l].iter_mut().zip(&delta_grad_w[l]).for_each(
+                    |(total_grad_neuron_w, delta_grad_neuron_w)| {
+                        total_grad_neuron_w
+                            .iter_mut()
+                            .zip(delta_grad_neuron_w)
+                            .for_each(|(total_w, delta_w)| {
+                                *total_w += delta_w;
+                            });
+                    },
+                );
+            }
+        }
+
+        // Update weights based of mini batch results
+        let step = self.learning_rate / batch.len() as f32;
+        for l in 0..self.layers.len() {
+            self.layers[l]
+                .biases
+                .iter_mut()
+                .zip(&total_grad_b[l])
+                .for_each(|(bias, grad_bias)| {
+                    *bias -= step * grad_bias;
+                });
+
+            self.layers[l]
+                .weights
+                .iter_mut()
+                .zip(&total_grad_w[l])
+                .for_each(|(neuron_weights, grad_weights)| {
+                    neuron_weights
+                        .iter_mut()
+                        .zip(grad_weights)
+                        .for_each(|(w, gw)| {
+                            *w -= step * gw;
+                        });
+                });
+        }
+    }
 }
