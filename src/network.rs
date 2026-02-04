@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::{seq::SliceRandom, Rng};
 
 /// A single layer in a neural network.
 /// `weights[neuron][input]` = connection strength, `biases[neuron]` = offset value.
@@ -242,5 +242,55 @@ impl Network {
                         });
                 });
         }
+    }
+
+    /// Stohastic Gradient Descent
+    pub fn sgd(
+        &mut self,
+        mut training_data: Vec<(Vec<f32>, Vec<f32>)>,
+        epochs: usize,
+        mini_batch_size: usize,
+        test_data: Option<&[(Vec<f32>, u8)]>,
+    ) {
+        for i in 0..epochs {
+            training_data.shuffle(&mut rand::rng());
+
+            for batch in training_data.chunks(mini_batch_size) {
+                self.update_mini_batch(batch);
+            }
+
+            if let Some(data) = test_data {
+                let success = self.evaluate(data);
+                println!("Epoch {}: {} / {}", i, success, data.len());
+            } else {
+                println!("Epoch {} finished", i);
+            }
+        }
+    }
+
+    pub fn evaluate(&self, test_data: &[(Vec<f32>, u8)]) -> usize {
+        let mut test_results = 0;
+
+        for (input, target) in test_data {
+            let output = self.predict(input);
+
+            // Find neuron index with the bigges signal
+            let (predicted, _) =
+                output
+                    .iter()
+                    .enumerate()
+                    .fold((0, 0.0), |(max_idx, max_val), (idx, &val)| {
+                        if val > max_val {
+                            (idx, val)
+                        } else {
+                            (max_idx, max_val)
+                        }
+                    });
+
+            if predicted == *target as usize {
+                test_results += 1;
+            }
+        }
+        test_results
     }
 }

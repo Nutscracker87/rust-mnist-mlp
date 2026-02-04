@@ -13,45 +13,39 @@ fn main() {
         .test_set_length(10_000)
         .finalize();
 
-    let train_images = mnist.trn_img;  // Vec<u8> of 60000 * 784 pixels
-    let train_labels = mnist.trn_lbl;  // Vec<u8> of 60000 labels
+    let train_images = mnist.trn_img; // Vec<u8> of 60000 * 784 pixels
+    let train_labels = mnist.trn_lbl; // Vec<u8> of 60000 labels
     let _test_images = mnist.tst_img;   // Vec<u8> of 10000 * 784 pixels
     let _test_labels = mnist.tst_lbl;   // Vec<u8> of 10000 labels
 
-    let nn = Network::new(&[784, 30, 10], 0.5);
-    let img_u8 = &train_images[0..784];
-    let label = &train_labels[0];
+    let mut training_data: Vec<(Vec<f32>, Vec<f32>)> = Vec::new();
 
-    let img_f32: Vec<f32> = img_u8.iter().map(|&x| (x as f32)/255.0 ).collect();
+    train_images
+        .chunks(784)
+        .zip(train_labels.iter())
+        .for_each(|(train_image, &label)| {
+            let img_to_255: Vec<f32> = train_image.iter().map(|&x| x as f32 / 255.0).collect();
 
-    let prediction = nn.predict(&img_f32);
+            training_data.push((img_to_255, vectorized_result(label)));
+        });
 
-    println!("Реальна цифра: {}", label);
-    println!("Прогноз мережі (10 імовірностей):");
-    for (digit, confidence) in prediction.iter().enumerate() {
-        println!("{}: {:.4}", digit, confidence);
-    }
+    let test_data: Vec<(Vec<f32>, u8)> = _test_images
+        .chunks(784)
+        .zip(_test_labels.iter())
+        .map(|(img, &lbl)| {
+            let img_f32 = img.iter().map(|&x| x as f32 / 255.0).collect();
+            (img_f32, lbl)
+        })
+        .collect();
 
-    // Display first 5 digits as ASCII art
-    // for i in 1..15 {
-    //     let label = train_labels[i];
-    //     let image = &train_images[i * 784..(i + 1) * 784];
-        
-    //     println!("\n=== Digit: {} (index {}) ===", label, i);
-    //     for row in 0..28 {
-    //         for col in 0..28 {
-    //             let pixel = image[row * 28 + col];
-    //             // Map pixel intensity to ASCII characters
-    //             let ch = match pixel {
-    //                 0..=50 => ' ',
-    //                 51..=100 => '.',
-    //                 101..=150 => '+',
-    //                 151..=200 => '*',
-    //                 201..=255 => '#',
-    //             };
-    //             print!("{}", ch);
-    //         }
-    //         println!();
-    //     }
-    // }
+    let mut net = Network::new(&[784, 30, 10], 3.0);
+    net.sgd(training_data, 30, 10, Some(&test_data));
+}
+
+// 1. Turn (labels) у "one-hot encoding" (vector with 10 elements)
+// Example: number 3 turns into[0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+fn vectorized_result(y: u8) -> Vec<f32> {
+    let mut e = vec![0.0; 10];
+    e[y as usize] = 1.0;
+    e
 }
