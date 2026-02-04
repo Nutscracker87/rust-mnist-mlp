@@ -1,3 +1,6 @@
+//! Feedforward neural network with sigmoid activations, trained by backpropagation
+//! and mini-batch stochastic gradient descent (SGD).
+
 use rand::{seq::SliceRandom, Rng};
 
 /// A single layer in a neural network.
@@ -182,7 +185,10 @@ impl Network {
         (weight_gradients, bias_gradients)
     }
 
+    /// Gradient descent on a mini-batch: accumulate gradients over all samples, then
+    /// update weights with the average gradient. w := w - (η/|batch|) * Σ∇w.
     pub fn update_mini_batch(&mut self, batch: &[(Vec<f32>, Vec<f32>)]) {
+        // Accumulators for sum of gradients over the batch (same shape as weights/biases)
         let mut total_grad_w: Vec<Vec<Vec<f32>>> = Vec::new();
         let mut total_grad_b: Vec<Vec<f32>> = Vec::new();
 
@@ -195,6 +201,7 @@ impl Network {
             total_grad_b.push(zero_biases);
         }
 
+        // Sum gradients from each (input, target) in the batch
         for (input, target) in batch {
             let (delta_grad_w, delta_grad_b) = self.backprop(input, target);
             for l in 0..self.layers.len() {
@@ -218,7 +225,7 @@ impl Network {
             }
         }
 
-        // Update weights based of mini batch results
+        // Apply update: subtract (learning_rate / batch_size) * average gradient
         let step = self.learning_rate / batch.len() as f32;
         for l in 0..self.layers.len() {
             self.layers[l]
@@ -244,7 +251,9 @@ impl Network {
         }
     }
 
-    /// Stohastic Gradient Descent
+    /// Stochastic gradient descent: train for `epochs`, each epoch shuffle data,
+    /// split into mini-batches, and call `update_mini_batch` on each. Optionally
+    /// evaluate on `test_data` after each epoch (input + label as u8).
     pub fn sgd(
         &mut self,
         mut training_data: Vec<(Vec<f32>, Vec<f32>)>,
@@ -268,13 +277,14 @@ impl Network {
         }
     }
 
+    /// Returns how many test samples were classified correctly. Prediction = argmax of output.
     pub fn evaluate(&self, test_data: &[(Vec<f32>, u8)]) -> usize {
         let mut test_results = 0;
 
         for (input, target) in test_data {
             let output = self.predict(input);
 
-            // Find neuron index with the bigges signal
+            // Predicted class = index of the output neuron with highest activation
             let (predicted, _) =
                 output
                     .iter()
