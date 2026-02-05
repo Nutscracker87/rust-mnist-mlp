@@ -1,5 +1,8 @@
 //! Feedforward neural network with sigmoid activations, trained by backpropagation
 //! and mini-batch stochastic gradient descent (SGD).
+//!
+//! **Loss:** MSE per output, C = ½ Σ (y − t)².  
+//! **Update:** w ← w − (η/|batch|) Σ ∇w,  b ← b − (η/|batch|) Σ ∇b.
 
 use rand::{seq::SliceRandom, Rng};
 
@@ -95,14 +98,26 @@ impl Network {
         current_output
     }
 
-    /// Backpropagation: compute gradients of loss w.r.t. all weights and biases.
-    /// Returns (weight_gradients, bias_gradients) for each layer. Uses MSE: (y - target)².
+    /// Backpropagation: ∇C w.r.t. all weights and biases.
+    /// Pipeline: forward (cache z, a) → compute_deltas (δ per layer) → compute_gradients (∂C/∂w, ∂C/∂b).
     pub fn backprop(
         &self,
         network_input: &[f32],
         target: &[f32],
     ) -> (Vec<Vec<Vec<f32>>>, Vec<Vec<f32>>) {
-        // --- FORWARD PASS: save all z (pre-activation) and a (activation) for backprop ---
+        let (all_layers_outputs, all_weighted_sums) = self.forward(network_input);
+        let layers_deltas = self.compute_deltas(&all_layers_outputs, &all_weighted_sums, target);
+
+        let (weight_gradients, bias_gradients) =
+            self.compute_gradients(layers_deltas, all_layers_outputs);
+
+        (weight_gradients, bias_gradients)
+    }
+
+    /// Forward pass with cache for backprop.
+    /// For each layer l:  z^l = W^l a^{l−1} + b^l,  a^l = σ(z^l).
+    /// Returns (all a from input through last layer, all z per layer).
+    fn forward(&self, network_input: &[f32]) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
         let mut all_layers_outputs = vec![network_input.to_vec()];
         let mut all_weighted_sums = vec![];
 
@@ -124,12 +139,23 @@ impl Network {
             current_layer_input = layer_outputs;
         }
 
-        // --- BACKWARD PASS: compute δ (delta) per layer ---
+        (all_layers_outputs, all_weighted_sums)
+    }
+
+    /// Backward pass: compute error signal δ for each layer.
+    /// Output layer (MSE + chain rule):  δ^L = (a^L − t) ⊙ σ'(z^L).
+    /// Hidden layers:  δ^l = (W^{l+1}ᵀ δ^{l+1}) ⊙ σ'(z^l).  (⊙ = element-wise)
+    fn compute_deltas(
+        &self,
+        all_layers_outputs: &[Vec<f32>],
+        all_weighted_sums: &[Vec<f32>],
+        target: &[f32],
+    ) -> Vec<Vec<f32>> {
         let mut layers_deltas: Vec<Vec<f32>> = Vec::new();
         let last_layer_weighted_sums = all_weighted_sums.last().expect("Weighted sums exist");
         let last_layer_outputs = all_layers_outputs.last().expect("Output exist");
 
-        // Output layer: δ = (y - target) * σ'(z)  [derivative of MSE + chain rule]
+        // Output layer: δ^L = (y − t) · σ'(z)
         let mut current_layer_deltas: Vec<f32> = last_layer_outputs
             .iter()
             .zip(target.iter())
@@ -139,14 +165,14 @@ impl Network {
 
         layers_deltas.push(current_layer_deltas.clone());
 
-        // Hidden layers: δ_l = (W_{l+1}^T · δ_{l+1}) * σ'(z_l). Walk from last-1 down to 0.
+        // Hidden: δ^l = (W^{l+1}ᵀ δ^{l+1}) ⊙ σ'(z^l),  l from L−1 down to 0
         for l in (0..self.layers.len() - 1).rev() {
             let mut next_delta: Vec<f32> = Vec::new();
             let current_layer_weighted_sums = &all_weighted_sums[l];
             let layer_to_right = &self.layers[l + 1];
 
             for i in 0..self.layers[l].weights.len() {
-                // Backprop error from layer l+1: sum over next layer's neurons j
+                // (W^{l+1}ᵀ δ^{l+1})_i = Σ_j W^{l+1}_{j,i} δ^{l+1}_j
                 let mut error_signal = 0.0;
                 for j in 0..layer_to_right.weights.len() {
                     error_signal += layer_to_right.weights[j][i] * current_layer_deltas[j];
@@ -160,16 +186,26 @@ impl Network {
 
         layers_deltas.reverse();
 
-        // --- GRADIENTS: dC/dw = δ * a_in,  dC/db = δ ---
+        layers_deltas
+    }
+
+    /// Gradient of cost w.r.t. weights and biases from deltas and cached activations.
+    /// ∂C/∂b^l = δ^l,  ∂C/∂W^l_{j,k} = δ^l_j · a^{l−1}_k.
+    fn compute_gradients(
+        &self,
+        layers_deltas: Vec<Vec<f32>>,
+        all_layers_outputs: Vec<Vec<f32>>,
+    ) -> (Vec<Vec<Vec<f32>>>, Vec<Vec<f32>>) {
         let mut weight_gradients: Vec<Vec<Vec<f32>>> = Vec::new();
-        let mut bias_gradients = Vec::new();
+        let mut bias_gradients: Vec<Vec<f32>> = Vec::new();
 
         for i in 0..self.layers.len() {
             let layer_deltas = &layers_deltas[i];
-            let layer_inputs = &all_layers_outputs[i]; // activations into this layer
+            let layer_inputs = &all_layers_outputs[i]; // a^{l−1}
 
             bias_gradients.push(layer_deltas.clone());
 
+            // ∂C/∂w_{j,k} = δ_j · a^{in}_k
             let mut layer_weight_gradients = Vec::new();
             for &delta in layer_deltas {
                 let mut neuron_weight_gradients = Vec::new();
@@ -185,10 +221,8 @@ impl Network {
         (weight_gradients, bias_gradients)
     }
 
-    /// Gradient descent on a mini-batch: accumulate gradients over all samples, then
-    /// update weights with the average gradient. w := w - (η/|batch|) * Σ∇w.
+    /// Mini-batch gradient step: sum ∇ over batch, then  w ← w − (η/n)Σ∇w,  b ← b − (η/n)Σ∇b.
     pub fn update_mini_batch(&mut self, batch: &[(Vec<f32>, Vec<f32>)]) {
-        // Accumulators for sum of gradients over the batch (same shape as weights/biases)
         let mut total_grad_w: Vec<Vec<Vec<f32>>> = Vec::new();
         let mut total_grad_b: Vec<Vec<f32>> = Vec::new();
 
@@ -201,7 +235,6 @@ impl Network {
             total_grad_b.push(zero_biases);
         }
 
-        // Sum gradients from each (input, target) in the batch
         for (input, target) in batch {
             let (delta_grad_w, delta_grad_b) = self.backprop(input, target);
             for l in 0..self.layers.len() {
@@ -225,8 +258,7 @@ impl Network {
             }
         }
 
-        // Apply update: subtract (learning_rate / batch_size) * average gradient
-        let step = self.learning_rate / batch.len() as f32;
+        let step = self.learning_rate / batch.len() as f32; // η/n
         for l in 0..self.layers.len() {
             self.layers[l]
                 .biases
