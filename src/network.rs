@@ -303,4 +303,23 @@ impl Network {
         }
         test_results
     }
+
+    pub fn prediction_to_digit(prediction: &[f32]) -> usize {
+        prediction
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .map(|(idx, _)| idx)
+            .unwrap()
+    }
+
+    // need to implement
+    // will return pixels positions + center maybe
+    // pub fn get_averaging_weights_distribution_of_pixels(&self)
+    // {
+
+    // }
+
+    // pub fn centering_training_sample_inside_pixels_heat_signature {}
+    // pub fn scaling_training_sample_to_fit_pixels_heat_signature {}
 }

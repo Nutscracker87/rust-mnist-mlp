@@ -4,7 +4,7 @@
 
 use image::{imageops, DynamicImage, GenericImageView, GrayImage, ImageBuffer, Luma};
 use mnist::MnistBuilder;
-use rand::{seq::IndexedRandom, Rng};
+use rand::seq::IndexedRandom;
 
 /// In-memory MNIST dataset: training pairs (input, one-hot target) and test pairs (input, label).
 pub struct MnistDataSet {
@@ -64,6 +64,11 @@ impl MnistDataSet {
         let mut rng = rand::rng();
         candidates.choose(&mut rng).map(|&pixels| pixels.clone())
     }
+
+    // pub fn format_training_samples(&self) {
+    //     //scaling,
+    //     //centering
+    // }
 }
 
 /// One-hot encode a digit label: 3 → [0, 0, 0, 1, 0, 0, 0, 0, 0, 0].
@@ -111,7 +116,7 @@ pub fn crop_to_content(img: &GrayImage) -> image::SubImage<&GrayImage> {
     }
 }
 
-/// Converts a user image (e.g. hand-drawn digit) to MNIST-like 28×28 grayscale: 
+/// Converts a user image (e.g. hand-drawn digit) to MNIST-like 28×28 grayscale:
 /// invert, crop, resize to fit in 20×20, center on 28×28, slight blur.
 pub fn prepare_mnist_image(img: &DynamicImage) -> ImageBuffer<Luma<u8>, Vec<u8>> {
     let mut gray_img = img.to_luma8();
@@ -148,4 +153,16 @@ pub fn prepare_mnist_image(img: &DynamicImage) -> ImageBuffer<Luma<u8>, Vec<u8>>
         }
     }
     canvas
+}
+
+/// Load and preprocess a custom digit image (e.g. hand-drawn) to match MNIST 28×28 format
+pub fn create_from_img(path: &str) -> Vec<f32> {
+    let img = image::open(path).expect("image should exist");
+    let my_digit_prep = prepare_mnist_image(&img);
+    let my_digit: Vec<f32> = my_digit_prep
+        .pixels()
+        .map(|p| p.0[0] as f32 / 255.0)
+        .collect();
+
+    my_digit
 }

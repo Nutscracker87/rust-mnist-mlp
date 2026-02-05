@@ -12,12 +12,7 @@ fn main() {
     let data_set = MnistDataSet::new();
 
     // Load and preprocess a custom digit image (e.g. hand-drawn) to match MNIST 28×28 format
-    let img = image::open("seven.png").expect("image should exist");
-    let my_digit_prep = data_loader::prepare_mnist_image(&img);
-    let my_digit: Vec<f32> = my_digit_prep
-        .pixels()
-        .map(|p| p.0[0] as f32 / 255.0)
-        .collect();
+    let my_digit = data_loader::create_from_img("seven.png");
 
     // Optional: show a sample digit from the training set for comparison
     let digit_from_train = data_set.get_random_digit(7).expect("Digit 7 exists in training set");
@@ -33,12 +28,7 @@ fn main() {
     let prediction = net.predict(&my_digit);
 
     // Predicted digit = index of the output neuron with highest activation
-    let result = prediction
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .map(|(idx, _)| idx)
-        .unwrap();
+    let result = Network::prediction_to_digit(&prediction);
 
     println!("Network predicts: {}", result);
     println!("Output scores (per class): {:?}", prediction);
