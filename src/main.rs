@@ -1,51 +1,67 @@
+//! MNIST digit classifier: loads data, trains a small MLP, and runs inference on a custom image.
+//! Entry point wires together data loading (data_loader), training (network), and console output.
+
 mod network;
+mod data_loader;
 
-// use neural_network::Perceptron;
-use mnist::MnistBuilder;
-
+use crate::data_loader::MnistDataSet;
 use crate::network::Network;
 
 fn main() {
-    let mnist = MnistBuilder::new()
-        .base_path("data")
-        .label_format_digit()
-        .training_set_length(60_000)
-        .test_set_length(10_000)
-        .finalize();
+    // Load MNIST and build (input, target) pairs for training and test
+    let data_set = MnistDataSet::new();
 
-    let train_images = mnist.trn_img; // Vec<u8> of 60000 * 784 pixels
-    let train_labels = mnist.trn_lbl; // Vec<u8> of 60000 labels
-    let _test_images = mnist.tst_img;   // Vec<u8> of 10000 * 784 pixels
-    let _test_labels = mnist.tst_lbl;   // Vec<u8> of 10000 labels
-
-    let mut training_data: Vec<(Vec<f32>, Vec<f32>)> = Vec::new();
-
-    train_images
-        .chunks(784)
-        .zip(train_labels.iter())
-        .for_each(|(train_image, &label)| {
-            let img_to_255: Vec<f32> = train_image.iter().map(|&x| x as f32 / 255.0).collect();
-
-            training_data.push((img_to_255, vectorized_result(label)));
-        });
-
-    let test_data: Vec<(Vec<f32>, u8)> = _test_images
-        .chunks(784)
-        .zip(_test_labels.iter())
-        .map(|(img, &lbl)| {
-            let img_f32 = img.iter().map(|&x| x as f32 / 255.0).collect();
-            (img_f32, lbl)
-        })
+    // Load and preprocess a custom digit image (e.g. hand-drawn) to match MNIST 28×28 format
+    let img = image::open("seven.png").expect("image should exist");
+    let my_digit_prep = data_loader::prepare_mnist_image(&img);
+    let my_digit: Vec<f32> = my_digit_prep
+        .pixels()
+        .map(|p| p.0[0] as f32 / 255.0)
         .collect();
 
-    let mut net = Network::new(&[784, 30, 10], 3.0);
-    net.sgd(training_data, 30, 10, Some(&test_data));
+    // Optional: show a sample digit from the training set for comparison
+    let digit_from_train = data_set.get_random_digit(7).expect("Digit 7 exists in training set");
+
+    visualise_number(&my_digit);
+    visualise_number(&digit_from_train);
+
+    // Build network (784 → 30 → 10) and train with mini-batch SGD
+    let mut net = Network::new(&[784, 30, 10], 2.0);
+    net.sgd(data_set.training_data, 30, 10, Some(&data_set.test_data));
+
+    // Predict class for the custom image; output is 10 class scores
+    let prediction = net.predict(&my_digit);
+
+    // Predicted digit = index of the output neuron with highest activation
+    let result = prediction
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .map(|(idx, _)| idx)
+        .unwrap();
+
+    println!("Network predicts: {}", result);
+    println!("Output scores (per class): {:?}", prediction);
 }
 
-// 1. Turn (labels) у "one-hot encoding" (vector with 10 elements)
-// Example: number 3 turns into[0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
-fn vectorized_result(y: u8) -> Vec<f32> {
-    let mut e = vec![0.0; 10];
-    e[y as usize] = 1.0;
-    e
+/// Prints a 28×28 digit (slice of 784 f32 in [0,1]) as ASCII art with a simple border.
+fn visualise_number(digit: &[f32]) {
+    println!("┌{}┐", "──".repeat(28));
+
+    for y in 0..28 {
+        print!("│");
+        for x in 0..28 {
+            let val = digit[y * 28 + x];
+            if val > 0.5 {
+                print!("██");
+            } else if val > 0.1 {
+                print!("░░");
+            } else {
+                print!("  ");
+            }
+        }
+        println!("│");
+    }
+
+    println!("└{}┘", "──".repeat(28));
 }
