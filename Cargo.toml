@@ -1,5 +1,5 @@
 [package]
-name = "logistic-neural-net"
+name = "rust-mnist-mlp"
 version = "0.1.0"
 edition = "2021"
 
