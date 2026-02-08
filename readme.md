@@ -22,15 +22,16 @@ Below, each stage is broken down into concrete steps with code references.
 **Prerequisites:** Rust toolchain (e.g. `rustup`), MNIST data in the `data/` folder.
 
 1. **Get MNIST data** (if not already present):
+
    - Place the four IDX files in `data/`: `train-images-idx3-ubyte`, `train-labels-idx1-ubyte`, `t10k-images-idx3-ubyte`, `t10k-labels-idx1-ubyte`.
    - Or download and extract from [yann.lecun.com/exdb/mnist](http://yann.lecun.com/exdb/mnist) (or a mirror) into `data/`.
-
 2. **Run the program:**
-   ```bash
-   cargo run
-   ```
-   The program loads MNIST, trains the network (784 → 30 → 10) for 30 epochs, then runs inference on a custom image `seven.png`. Put a 28×28-friendly digit image at `seven.png` (or change the path in `main.rs`).
 
+   ```bash
+   cargo run --release
+   ```
+
+   The program loads MNIST, trains the network (784 → 30 → 10) for 30 epochs, then runs inference on a custom image `seven.png`. Put a 28×28-friendly digit image at `seven.png` (or change the path in `main.rs`).
 3. **Optional:** To try your own digit image, use the same name in code or call `data_loader::create_from_img("your_image.png")` to preprocess it to MNIST-style 28×28 grayscale.
 
 ---
@@ -45,7 +46,7 @@ Below, each stage is broken down into concrete steps with code references.
 - **Inference** — Forward pass only; predicted digit = argmax of output. → `Network::predict()`, `Network::prediction_to_digit()`
 - **Evaluation** — Count correct predictions on test set. → `Network::evaluate()`
 
-**Loss:** MSE per output, $C = \frac{1}{2} \sum (y - t)^2$.  
+**Loss:** MSE per output, $C = \frac{1}{2} \sum (y - t)^2$.
 **Update rule:** $w \leftarrow w - (\eta/|\text{batch}|) \sum \nabla w$, $b \leftarrow b - (\eta/|\text{batch}|) \sum \nabla b$.
 
 ---
@@ -165,11 +166,13 @@ Goal: given a single image (e.g. your custom 28×28 vector), run the network and
 For each layer **l** from 1 to L we compute pre-activation and activation; these are cached for the backward pass.
 
 **Weighted sum (pre-activation):**
+
 $$
 z^{(l)}_{j} = \sum_{k} w^{(l)}_{jk} \cdot a^{(l-1)}_{k} + b^{(l)}_{j}
 $$
 
 **Activation:**
+
 $$
 a^{(l)}_{j} = \sigma(z^{(l)}_{j})
 $$
@@ -209,11 +212,13 @@ So we combine the deltas of layer $l+1$, weighted by the connections back to neu
 Using the cached $a$ and the computed $\delta$, we get the gradients of the cost with respect to weights and biases.
 
 **Bias gradient:**
+
 $$
 \frac{\partial C}{\partial b^{(l)}_{j}} = \delta^{(l)}_{j}
 $$
 
 **Weight gradient:**
+
 $$
 \frac{\partial C}{\partial w^{(l)}_{jk}} = a^{(l-1)}_{k} \cdot \delta^{(l)}_{j}
 $$
@@ -229,7 +234,7 @@ $$
 3. **Gradients:** Compute $\partial C/\partial w$ and $\partial C/\partial b$ → `compute_gradients()`.
 4. **Batch:** For a mini-batch, sum the gradients over all samples, then update:
    - $w \leftarrow w - (\eta/n) \sum \nabla w$, $b \leftarrow b - (\eta/n) \sum \nabla b$,
-   where $n$ is the batch size → done inside `update_mini_batch()` after calling `backprop()` for each sample and accumulating.
+     where $n$ is the batch size → done inside `update_mini_batch()` after calling `backprop()` for each sample and accumulating.
 
 **In code:** `backprop()` orchestrates steps 1–3. `update_mini_batch()` loops over the batch, calls `backprop()` for each (input, target), accumulates gradients, then applies the update with step size $\eta/n$.
 
@@ -237,13 +242,13 @@ $$
 
 ## Summary
 
-| Theory | Code |
-|--------|------|
-| Forward: $z^l = W^l a^{l-1} + b^l$, $a^l = \sigma(z^l)$ | `forward()`, `Layer::calculate_output()` |
-| Output delta: $\delta^L = (a^L - t) \odot \sigma'(z^L)$ | `compute_deltas()` (output layer) |
-| Hidden delta: $\delta^l = (W^{l+1})^T \delta^{l+1} \odot \sigma'(z^l)$ | `compute_deltas()` (hidden loop) |
-| $\partial C/\partial b = \delta$, $\partial C/\partial w = \delta \cdot a^{\mathrm{in}}$ | `compute_gradients()` |
-| Mini-batch SGD update | `update_mini_batch()`, `sgd()` |
+| Theory                                                                                       | Code                                         |
+| -------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| Forward:$z^l = W^l a^{l-1} + b^l$, $a^l = \sigma(z^l)$                                   | `forward()`, `Layer::calculate_output()` |
+| Output delta:$\delta^L = (a^L - t) \odot \sigma'(z^L)$                                     | `compute_deltas()` (output layer)          |
+| Hidden delta:$\delta^l = (W^{l+1})^T \delta^{l+1} \odot \sigma'(z^l)$                      | `compute_deltas()` (hidden loop)           |
+| $\partial C/\partial b = \delta$, $\partial C/\partial w = \delta \cdot a^{\mathrm{in}}$ | `compute_gradients()`                      |
+| Mini-batch SGD update                                                                        | `update_mini_batch()`, `sgd()`           |
 
 ---
 
