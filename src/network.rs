@@ -4,6 +4,8 @@
 //! **Loss:** MSE per output, C = ½ Σ (y − t)².  
 //! **Update:** w ← w − (η/|batch|) Σ ∇w,  b ← b − (η/|batch|) Σ ∇b.
 
+use std::time::Instant;
+
 use ndarray::{Array1, Array2, ArrayView1, Axis};
 use rand::{seq::SliceRandom, Rng};
 use rayon::prelude::*;
@@ -226,7 +228,9 @@ impl Network {
             "SGD: {} epochs, {} batches per epoch",
             epochs, total_batches
         );
+        let total_start = Instant::now();
         for i in 0..epochs {
+            let epoch_start = Instant::now();
             training_data.shuffle(&mut rand::rng());
             println!("Epoch {}/{} ...", i + 1, epochs);
             for batch in training_data.chunks(mini_batch_size) {
@@ -235,17 +239,22 @@ impl Network {
 
             if let Some(data) = test_data {
                 let success = self.evaluate(data);
+                let epoch_secs = epoch_start.elapsed().as_secs_f64();
                 println!(
-                    "  Epoch {}/{}: {} / {} correct",
+                    "  Epoch {}/{}: {} / {} correct ({:.2}s)",
                     i + 1,
                     epochs,
                     success,
-                    data.len()
+                    data.len(),
+                    epoch_secs
                 );
             } else {
-                println!("Epoch {} finished", i);
+                let epoch_secs = epoch_start.elapsed().as_secs_f64();
+                println!("Epoch {} finished ({:.2}s)", i, epoch_secs);
             }
         }
+        let total_secs = total_start.elapsed().as_secs_f64();
+        println!("Total training time: {:.2}s", total_secs);
     }
 
     /// Returns how many test samples were classified correctly. Prediction = argmax of output.
