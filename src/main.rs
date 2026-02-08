@@ -24,6 +24,7 @@ fn main() {
     visualise_number(&my_digit);
     visualise_number(&digit_from_train);
 
+    println!("Preparing training and test data...");
     let training_data: Vec<(Array1<f32>, Array1<f32>)> = data_set
         .training_data
         .into_iter()
@@ -36,12 +37,12 @@ fn main() {
         .map(|(img, lbl)| (Array1::from_vec(img), lbl))
         .collect();
 
-    print!("The program reached here");    
+    println!("Data prepared; starting training...");
     let my_digit = Array1::from_vec(my_digit);
 
     // Build network (784 → 30 → 10) and train with mini-batch SGD
-    let mut net = Network::new(&[784, 30, 10], 2.0);
-    net.sgd(training_data, 30, 10, Some(&test_data));
+    let mut net = Network::new(&[784, 30, 10], 3.0);
+    net.sgd(training_data, 30, 32, Some(&test_data));
 
     // Predict class for the custom image; output is 10 class scores
     let prediction = net.predict(my_digit.view());
