@@ -64,11 +64,6 @@ impl MnistDataSet {
         let mut rng = rand::rng();
         candidates.choose(&mut rng).map(|&pixels| pixels.clone())
     }
-
-    // pub fn format_training_samples(&self) {
-    //     //scaling,
-    //     //centering
-    // }
 }
 
 /// One-hot encode a digit label: 3 → [0, 0, 0, 1, 0, 0, 0, 0, 0, 0].
@@ -125,12 +120,11 @@ pub fn prepare_mnist_image(img: &DynamicImage) -> ImageBuffer<Luma<u8>, Vec<u8>>
     let cropped = crop_to_content(&gray_img);
     let (cw, ch) = cropped.dimensions();
 
+    // Scale to fit within 20x20
     let (new_w, new_h) = if cw > ch {
-        let nh = (20 * ch) / cw;
-        (20, nh.max(1))
+        (20, (20 * ch / cw).max(1))
     } else {
-        let nw = (20 * cw) / ch;
-        (nw.max(1), 20)
+        ((20 * cw / ch).max(1), 20)
     };
 
     let mut resized = imageops::resize(
@@ -139,17 +133,49 @@ pub fn prepare_mnist_image(img: &DynamicImage) -> ImageBuffer<Luma<u8>, Vec<u8>>
         new_h,
         imageops::FilterType::Lanczos3,
     );
-    resized = imageops::blur(&resized, 0.7);
+    resized = imageops::blur(&resized, 0.5);
 
+    // --- NEW: CENTER OF MASS CALCULATION ---
+    let mut total_mass = 0.0;
+    let mut sum_x = 0.0;
+    let mut sum_y = 0.0;
+
+    for y in 0..new_h {
+        for x in 0..new_w {
+            let pixel_val = resized.get_pixel(x, y).0[0] as f32;
+            sum_x += x as f32 * pixel_val;
+            sum_y += y as f32 * pixel_val;
+            total_mass += pixel_val;
+        }
+    }
+
+    // Default to geometric center if image is empty
+    let (com_x, com_y) = if total_mass > 0.0 {
+        (sum_x / total_mass, sum_y / total_mass)
+    } else {
+        (new_w as f32 / 2.0, new_h as f32 / 2.0)
+    };
+
+    // Calculate offsets to place Center of Mass at (14, 14)
+    let x_offset = (14.0 - com_x).round() as i32;
+    let y_offset = (14.0 - com_y).round() as i32;
+
+    // --- CREATE CANVAS ---
     let mut canvas = ImageBuffer::new(28, 28);
-    let x_offset = (28 - new_w) / 2;
-    let y_offset = (28 - new_h) / 2;
 
     for y in 0..new_h {
         for x in 0..new_w {
             let p = resized.get_pixel(x, y);
-            let enhanced_val = (p.0[0] as f32 * 2.0).min(255.0) as u8;
-            canvas.put_pixel(x + x_offset, y + y_offset, Luma([enhanced_val]));
+            // Boost signal to ensure it's not too faint
+            let enhanced_val = (p.0[0] as f32 * 1.5).min(255.0) as u8;
+
+            let target_x = x as i32 + x_offset;
+            let target_y = y as i32 + y_offset;
+
+            // Only draw if within 28x28 bounds
+            if target_x >= 0 && target_x < 28 && target_y >= 0 && target_y < 28 {
+                canvas.put_pixel(target_x as u32, target_y as u32, Luma([enhanced_val]));
+            }
         }
     }
     canvas
