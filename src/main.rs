@@ -1,8 +1,10 @@
 //! MNIST digit classifier: loads data, trains a small MLP, and runs inference on a custom image.
 //! Entry point wires together data loading (data_loader), training (network), and console output.
 
-mod network;
 mod data_loader;
+mod network;
+
+use ndarray::Array1;
 
 use crate::data_loader::MnistDataSet;
 use crate::network::Network;
@@ -15,20 +17,37 @@ fn main() {
     let my_digit = data_loader::create_from_img("seven.png");
 
     // Optional: show a sample digit from the training set for comparison
-    let digit_from_train = data_set.get_random_digit(7).expect("Digit 7 exists in training set");
+    let digit_from_train = data_set
+        .get_random_digit(7)
+        .expect("Digit 7 exists in training set");
 
     visualise_number(&my_digit);
     visualise_number(&digit_from_train);
 
+    let training_data: Vec<(Array1<f32>, Array1<f32>)> = data_set
+        .training_data
+        .into_iter()
+        .map(|(img, lbl)| (Array1::from_vec(img), Array1::from_vec(lbl)))
+        .collect();
+
+    let test_data: Vec<(Array1<f32>, u8)> = data_set
+        .test_data
+        .into_iter()
+        .map(|(img, lbl)| (Array1::from_vec(img), lbl))
+        .collect();
+
+    print!("The program reached here");    
+    let my_digit = Array1::from_vec(my_digit);
+
     // Build network (784 → 30 → 10) and train with mini-batch SGD
     let mut net = Network::new(&[784, 30, 10], 2.0);
-    net.sgd(data_set.training_data, 30, 10, Some(&data_set.test_data));
+    net.sgd(training_data, 30, 10, Some(&test_data));
 
     // Predict class for the custom image; output is 10 class scores
-    let prediction = net.predict(&my_digit);
+    let prediction = net.predict(my_digit.view());
 
     // Predicted digit = index of the output neuron with highest activation
-    let result = Network::prediction_to_digit(&prediction);
+    let result = Network::prediction_to_digit(prediction.view());
 
     println!("Network predicts: {}", result);
     println!("Output scores (per class): {:?}", prediction);

@@ -4,15 +4,16 @@
 //! **Loss:** MSE per output, C = ½ Σ (y − t)².  
 //! **Update:** w ← w − (η/|batch|) Σ ∇w,  b ← b − (η/|batch|) Σ ∇b.
 
+use ndarray::{Array1, Array2, ArrayView1, Axis};
 use rand::{seq::SliceRandom, Rng};
 
 /// A single layer in a neural network.
 /// `weights[neuron][input]` = connection strength, `biases[neuron]` = offset value.
 pub struct Layer {
     /// Weight matrix: `weights[neuron][input]`
-    pub weights: Vec<Vec<f32>>,
+    pub weights: Array2<f32>,
     /// Bias vector: one per neuron
-    pub biases: Vec<f32>,
+    pub biases: Array1<f32>,
 }
 
 /// Sigmoid: σ(z) = 1 / (1 + e^(-z)). Squashes values to (0, 1).
@@ -25,40 +26,25 @@ fn sigmoid_derivative(z: f32) -> f32 {
     sigmoid(z) * (1.0 - sigmoid(z))
 }
 
-/// Sum of (input[i] * weights[i]) for one neuron's pre-activation.
-fn dot_product(input: &[f32], weights: &[f32]) -> f32 {
-    input.iter().zip(weights).map(|(x, w)| x * w).sum()
-}
-
 impl Layer {
     /// Creates a new layer with random weights and biases in range [-1.0, 1.0).
     pub fn new(input_size: usize, num_neurons: usize) -> Self {
         let mut rng = rand::rng();
 
-        let weights = (0..num_neurons)
-            .map(|_| {
-                (0..input_size)
-                    .map(|_| rng.random_range(-1.0..1.0))
-                    .collect()
-            })
-            .collect();
+        let weights: Array2<f32> =
+            Array2::from_shape_fn((num_neurons, input_size), |_| rng.random_range(-1.0..1.0));
 
-        let biases = (0..num_neurons)
-            .map(|_| rng.random_range(-1.0..1.0))
-            .collect();
+        let biases: Array1<f32> =
+            Array1::from_shape_fn(num_neurons, |_| rng.random_range(-1.0..1.0));
 
         Self { weights, biases }
     }
 
     /// Forward pass: for each neuron, z = w·x + b, then output = σ(z).
-    pub fn calculate_output(&self, inputs: &[f32]) -> Vec<f32> {
-        let mut outputs = Vec::with_capacity(self.biases.len());
-        let num_neurons = self.weights.len();
+    pub fn calculate_output(&self, inputs: ArrayView1<f32>) -> Array1<f32> {
+        let z: Array1<f32> = self.weights.dot(&inputs) + &self.biases;
 
-        for i in 0..num_neurons {
-            let z = dot_product(&inputs, &self.weights[i]) + self.biases[i];
-            outputs.push(sigmoid(z))
-        }
+        let outputs = z.mapv(sigmoid);
 
         outputs
     }
@@ -88,11 +74,11 @@ impl Network {
     }
 
     /// Forward pass through all layers. Returns final layer activations (e.g. 10 class scores).
-    pub fn predict(&self, input: &[f32]) -> Vec<f32> {
-        let mut current_output = input.to_vec();
+    pub fn predict(&self, input: ArrayView1<f32>) -> Array1<f32> {
+        let mut current_output = input.to_owned();
 
         for layer in &self.layers {
-            current_output = layer.calculate_output(&current_output);
+            current_output = layer.calculate_output(current_output.view());
         }
 
         current_output
@@ -102,9 +88,9 @@ impl Network {
     /// Pipeline: forward (cache z, a) → compute_deltas (δ per layer) → compute_gradients (∂C/∂w, ∂C/∂b).
     pub fn backprop(
         &self,
-        network_input: &[f32],
-        target: &[f32],
-    ) -> (Vec<Vec<Vec<f32>>>, Vec<Vec<f32>>) {
+        network_input: ArrayView1<f32>,
+        target: ArrayView1<f32>,
+    ) -> (Vec<Array2<f32>>, Vec<Array1<f32>>) {
         let (all_layers_outputs, all_weighted_sums) = self.forward(network_input);
         let layers_deltas = self.compute_deltas(&all_layers_outputs, &all_weighted_sums, target);
 
@@ -117,26 +103,19 @@ impl Network {
     /// Forward pass with cache for backprop.
     /// For each layer l:  z^l = W^l a^{l−1} + b^l,  a^l = σ(z^l).
     /// Returns (all a from input through last layer, all z per layer).
-    fn forward(&self, network_input: &[f32]) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
-        let mut all_layers_outputs = vec![network_input.to_vec()];
+    fn forward(&self, network_input: ArrayView1<f32>) -> (Vec<Array1<f32>>, Vec<Array1<f32>>) {
+        let mut all_layers_outputs: Vec<Array1<f32>> = vec![network_input.to_owned()];
+
         let mut all_weighted_sums = vec![];
 
-        let mut current_layer_input = network_input.to_vec();
-
         for layer in &self.layers {
-            let mut weighted_sum = Vec::new();
-            let mut layer_outputs = Vec::new();
+            // get last output for previous layer to use as input for the current (next) layer
+            let current_input = all_layers_outputs.last().unwrap().view();
+            let z = layer.weights.dot(&current_input) + &layer.biases;
+            let a = z.mapv(sigmoid);
 
-            for i in 0..layer.weights.len() {
-                let z = dot_product(&current_layer_input, &layer.weights[i]) + layer.biases[i];
-                weighted_sum.push(z);
-                layer_outputs.push(sigmoid(z));
-            }
-
-            all_weighted_sums.push(weighted_sum);
-            all_layers_outputs.push(layer_outputs.clone());
-
-            current_layer_input = layer_outputs;
+            all_weighted_sums.push(z);
+            all_layers_outputs.push(a);
         }
 
         (all_layers_outputs, all_weighted_sums)
@@ -147,41 +126,27 @@ impl Network {
     /// Hidden layers:  δ^l = (W^{l+1}ᵀ δ^{l+1}) ⊙ σ'(z^l).  (⊙ = element-wise)
     fn compute_deltas(
         &self,
-        all_layers_outputs: &[Vec<f32>],
-        all_weighted_sums: &[Vec<f32>],
-        target: &[f32],
-    ) -> Vec<Vec<f32>> {
-        let mut layers_deltas: Vec<Vec<f32>> = Vec::new();
+        all_layers_outputs: &Vec<Array1<f32>>,
+        all_weighted_sums: &Vec<Array1<f32>>,
+        target: ArrayView1<f32>,
+    ) -> Vec<Array1<f32>> {
+        let mut layers_deltas: Vec<Array1<f32>> = Vec::new();
         let last_layer_weighted_sums = all_weighted_sums.last().expect("Weighted sums exist");
         let last_layer_outputs = all_layers_outputs.last().expect("Output exist");
 
         // Output layer: δ^L = (y − t) · σ'(z)
-        let mut current_layer_deltas: Vec<f32> = last_layer_outputs
-            .iter()
-            .zip(target.iter())
-            .zip(last_layer_weighted_sums.iter())
-            .map(|((&y, &target), &z)| (y - target) * sigmoid_derivative(z))
-            .collect();
-
+        let mut current_layer_deltas =
+            (last_layer_outputs - &target) * last_layer_weighted_sums.mapv(sigmoid_derivative);
         layers_deltas.push(current_layer_deltas.clone());
 
         // Hidden: δ^l = (W^{l+1}ᵀ δ^{l+1}) ⊙ σ'(z^l),  l from L−1 down to 0
         for l in (0..self.layers.len() - 1).rev() {
-            let mut next_delta: Vec<f32> = Vec::new();
-            let current_layer_weighted_sums = &all_weighted_sums[l];
             let layer_to_right = &self.layers[l + 1];
+            current_layer_deltas = layer_to_right.weights.t().dot(&current_layer_deltas)
+                * all_weighted_sums[l].mapv(sigmoid_derivative);
 
-            for i in 0..self.layers[l].weights.len() {
-                // (W^{l+1}ᵀ δ^{l+1})_i = Σ_j W^{l+1}_{j,i} δ^{l+1}_j
-                let mut error_signal = 0.0;
-                for j in 0..layer_to_right.weights.len() {
-                    error_signal += layer_to_right.weights[j][i] * current_layer_deltas[j];
-                }
-                next_delta.push(error_signal * sigmoid_derivative(current_layer_weighted_sums[i]));
-            }
-
-            current_layer_deltas = next_delta.clone();
-            layers_deltas.push(next_delta);
+            // Add copy to the history
+            layers_deltas.push(current_layer_deltas.clone());
         }
 
         layers_deltas.reverse();
@@ -193,93 +158,56 @@ impl Network {
     /// ∂C/∂b^l = δ^l,  ∂C/∂W^l_{j,k} = δ^l_j · a^{l−1}_k.
     fn compute_gradients(
         &self,
-        layers_deltas: Vec<Vec<f32>>,
-        all_layers_outputs: Vec<Vec<f32>>,
-    ) -> (Vec<Vec<Vec<f32>>>, Vec<Vec<f32>>) {
-        let mut weight_gradients: Vec<Vec<Vec<f32>>> = Vec::new();
-        let mut bias_gradients: Vec<Vec<f32>> = Vec::new();
+        layers_deltas: Vec<Array1<f32>>,
+        all_layers_outputs: Vec<Array1<f32>>,
+    ) -> (Vec<Array2<f32>>, Vec<Array1<f32>>) {
+        let mut weight_gradients: Vec<Array2<f32>> = Vec::new();
 
         for i in 0..self.layers.len() {
-            let layer_deltas = &layers_deltas[i];
-            let layer_inputs = &all_layers_outputs[i]; // a^{l−1}
+            // let layer_deltas = &layers_deltas[i];
+            // let layer_inputs = &all_layers_outputs[i]; // a^{l−1}
 
-            bias_gradients.push(layer_deltas.clone());
+            let layer_deltas_matrix = &layers_deltas[i].view().insert_axis(Axis(1)); // (N x 1) - "column"
+            let layer_inputs = &all_layers_outputs[i].view().insert_axis(Axis(0)); // (1 x M) - "row"
 
             // ∂C/∂w_{j,k} = δ_j · a^{in}_k
-            let mut layer_weight_gradients = Vec::new();
-            for &delta in layer_deltas {
-                let mut neuron_weight_gradients = Vec::new();
-                for &activation in layer_inputs {
-                    neuron_weight_gradients.push(delta * activation);
-                }
-                layer_weight_gradients.push(neuron_weight_gradients);
-            }
+            let layer_weight_gradients = layer_deltas_matrix * layer_inputs;
 
             weight_gradients.push(layer_weight_gradients);
+            //weight_gradients.push(layer_weight_gradients);
         }
+
+        let bias_gradients: Vec<Array1<f32>> = layers_deltas;
 
         (weight_gradients, bias_gradients)
     }
 
     /// Mini-batch gradient step: sum ∇ over batch, then  w ← w − (η/n)Σ∇w,  b ← b − (η/n)Σ∇b.
-    pub fn update_mini_batch(&mut self, batch: &[(Vec<f32>, Vec<f32>)]) {
-        let mut total_grad_w: Vec<Vec<Vec<f32>>> = Vec::new();
-        let mut total_grad_b: Vec<Vec<f32>> = Vec::new();
+    pub fn update_mini_batch(&mut self, batch: &[(Array1<f32>, Array1<f32>)]) {
+        let mut total_grad_w: Vec<Array2<f32>> = self
+            .layers
+            .iter()
+            .map(|layer| Array2::<f32>::zeros(layer.weights.raw_dim()))
+            .collect();
 
-        for layer in &self.layers {
-            let zero_weights: Vec<Vec<f32>> =
-                vec![vec![0.0; layer.weights[0].len()]; layer.weights.len()];
-            total_grad_w.push(zero_weights);
-
-            let zero_biases: Vec<f32> = vec![0.0; layer.biases.len()];
-            total_grad_b.push(zero_biases);
-        }
+        let mut total_grad_b: Vec<Array1<f32>> = self
+            .layers
+            .iter()
+            .map(|layer| Array1::<f32>::zeros(layer.biases.raw_dim()))
+            .collect();
 
         for (input, target) in batch {
-            let (delta_grad_w, delta_grad_b) = self.backprop(input, target);
+            let (delta_grad_w, delta_grad_b) = self.backprop(input.view(), target.view());
             for l in 0..self.layers.len() {
-                total_grad_b[l]
-                    .iter_mut()
-                    .zip(&delta_grad_b[l])
-                    .for_each(|(total_b, delta_b)| {
-                        *total_b += delta_b;
-                    });
-
-                total_grad_w[l].iter_mut().zip(&delta_grad_w[l]).for_each(
-                    |(total_grad_neuron_w, delta_grad_neuron_w)| {
-                        total_grad_neuron_w
-                            .iter_mut()
-                            .zip(delta_grad_neuron_w)
-                            .for_each(|(total_w, delta_w)| {
-                                *total_w += delta_w;
-                            });
-                    },
-                );
+                total_grad_b[l] += &delta_grad_b[l];
+                total_grad_w[l] += &delta_grad_w[l];
             }
         }
 
         let step = self.learning_rate / batch.len() as f32; // η/n
         for l in 0..self.layers.len() {
-            self.layers[l]
-                .biases
-                .iter_mut()
-                .zip(&total_grad_b[l])
-                .for_each(|(bias, grad_bias)| {
-                    *bias -= step * grad_bias;
-                });
-
-            self.layers[l]
-                .weights
-                .iter_mut()
-                .zip(&total_grad_w[l])
-                .for_each(|(neuron_weights, grad_weights)| {
-                    neuron_weights
-                        .iter_mut()
-                        .zip(grad_weights)
-                        .for_each(|(w, gw)| {
-                            *w -= step * gw;
-                        });
-                });
+            self.layers[l].biases -= &(step * &total_grad_b[l]);
+            self.layers[l].weights -= &(step * &total_grad_w[l]);
         }
     }
 
@@ -288,14 +216,15 @@ impl Network {
     /// evaluate on `test_data` after each epoch (input + label as u8).
     pub fn sgd(
         &mut self,
-        mut training_data: Vec<(Vec<f32>, Vec<f32>)>,
+        mut training_data: Vec<(Array1<f32>, Array1<f32>)>,
         epochs: usize,
         mini_batch_size: usize,
-        test_data: Option<&[(Vec<f32>, u8)]>,
+        test_data: Option<&[(Array1<f32>, u8)]>,
     ) {
+        print!("Start of sgd method");
         for i in 0..epochs {
             training_data.shuffle(&mut rand::rng());
-
+            print!("Epoch {} started", i);
             for batch in training_data.chunks(mini_batch_size) {
                 self.update_mini_batch(batch);
             }
@@ -310,11 +239,11 @@ impl Network {
     }
 
     /// Returns how many test samples were classified correctly. Prediction = argmax of output.
-    pub fn evaluate(&self, test_data: &[(Vec<f32>, u8)]) -> usize {
+    pub fn evaluate(&self, test_data: &[(Array1<f32>, u8)]) -> usize {
         let mut test_results = 0;
 
         for (input, target) in test_data {
-            let output = self.predict(input);
+            let output = self.predict(input.view());
 
             // Predicted class = index of the output neuron with highest activation
             let (predicted, _) =
@@ -336,7 +265,7 @@ impl Network {
         test_results
     }
 
-    pub fn prediction_to_digit(prediction: &[f32]) -> usize {
+    pub fn prediction_to_digit(prediction: ArrayView1<f32>) -> usize {
         prediction
             .iter()
             .enumerate()
