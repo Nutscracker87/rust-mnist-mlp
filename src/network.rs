@@ -4,6 +4,8 @@
 //! **Loss:** MSE per output, C = ½ Σ (y − t)².  
 //! **Update:** w ← w − (η/|batch|) Σ ∇w,  b ← b − (η/|batch|) Σ ∇b.
 
+use std::time::Instant;
+
 use rand::{seq::SliceRandom, Rng};
 
 /// A single layer in a neural network.
@@ -293,20 +295,27 @@ impl Network {
         mini_batch_size: usize,
         test_data: Option<&[(Vec<f32>, u8)]>,
     ) {
+        let total_start = Instant::now();
         for i in 0..epochs {
+            let epoch_start = Instant::now();
+
             training_data.shuffle(&mut rand::rng());
 
             for batch in training_data.chunks(mini_batch_size) {
                 self.update_mini_batch(batch);
             }
 
+            let epoch_secs = epoch_start.elapsed().as_secs_f64();
+
             if let Some(data) = test_data {
                 let success = self.evaluate(data);
-                println!("Epoch {}: {} / {}", i, success, data.len());
+                println!("Epoch {}: {} / {} ({:.2}s)", i, success, data.len(), epoch_secs);
             } else {
-                println!("Epoch {} finished", i);
+                println!("Epoch {} finished ({:.2}s)", i, epoch_secs);
             }
         }
+        let total_secs = total_start.elapsed().as_secs_f64();
+        println!("Total Training Time {:.2}s", total_secs);
     }
 
     /// Returns how many test samples were classified correctly. Prediction = argmax of output.
