@@ -7,3 +7,5 @@ edition = "2021"
 mnist = { version = "0.6", features = ["download"] }
 rand = "0.9.2"
 image = "0.24.1"
+ndarray = "0.16.0"
+rayon = "1.10"
