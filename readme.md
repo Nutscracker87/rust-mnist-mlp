@@ -4,6 +4,19 @@ MNIST digit classifier using a multilayer perceptron (MLP) and backpropagation. 
 
 ---
 
+## Program flow at a glance
+
+The program runs in four main stages:
+
+1. **Prepare custom image** — Turn your image (e.g. hand-drawn digit) into MNIST-style 28×28 grayscale.
+2. **Load MNIST data** — Read training/test images from disk, normalize pixels, one-hot encode labels.
+3. **Train the network** — Mini-batch SGD: shuffle data, split into batches, backprop + gradient update per batch, optionally evaluate on test set each epoch.
+4. **Inference** — Run the trained network on your custom image and print the predicted digit.
+
+Below, each stage is broken down into concrete steps with code references.
+
+---
+
 ## Quick start
 
 **Prerequisites:** Rust toolchain (e.g. `rustup`), MNIST data in the `data/` folder.
@@ -24,18 +37,113 @@ MNIST digit classifier using a multilayer perceptron (MLP) and backpropagation. 
 
 ## Project structure and workflow
 
-| Step | What happens | Where in code |
-|------|----------------|----------------|
-| **Data** | Load MNIST, normalize pixels to [0,1], one-hot encode labels | `data_loader::MnistDataSet::new()`, `vectorized_result()` |
-| **Custom image** | Load and preprocess a hand-drawn digit to 28×28 | `data_loader::create_from_img()`, `prepare_mnist_image()` |
-| **Build network** | Create MLP with given layer sizes and learning rate | `Network::new(&[784, 30, 10], learning_rate)` |
-| **Training** | Shuffle data, split into mini-batches, backprop + gradient step per batch | `Network::sgd()`, which calls `update_mini_batch()` |
-| **Single batch step** | For each sample: forward → deltas → gradients; then average and update weights | `update_mini_batch()` → `backprop()` → `forward()`, `compute_deltas()`, `compute_gradients()` |
-| **Inference** | Forward pass only; predicted digit = argmax of output | `Network::predict()`, `Network::prediction_to_digit()` |
-| **Evaluation** | Count correct predictions on test set | `Network::evaluate()` |
+- **Data** — Load MNIST, normalize pixels to [0,1], one-hot encode labels. → `data_loader::MnistDataSet::new()`, `vectorized_result()`
+- **Custom image** — Load and preprocess a hand-drawn digit to 28×28. → `data_loader::create_from_img()`, `prepare_mnist_image()`
+- **Build network** — Create MLP with given layer sizes and learning rate. → `Network::new(&[784, 30, 10], learning_rate)`
+- **Training** — Shuffle data, split into mini-batches, backprop + gradient step per batch. → `Network::sgd()`, which calls `update_mini_batch()`
+- **Single batch step** — For each sample: forward → deltas → gradients; then average and update weights. → `update_mini_batch()` → `backprop()` → `forward()`, `compute_deltas()`, `compute_gradients()`
+- **Inference** — Forward pass only; predicted digit = argmax of output. → `Network::predict()`, `Network::prediction_to_digit()`
+- **Evaluation** — Count correct predictions on test set. → `Network::evaluate()`
 
 **Loss:** MSE per output, $C = \frac{1}{2} \sum (y - t)^2$.  
 **Update rule:** $w \leftarrow w - (\eta/|\text{batch}|) \sum \nabla w$, $b \leftarrow b - (\eta/|\text{batch}|) \sum \nabla b$.
+
+---
+
+## Detailed workflow by stage
+
+Step-by-step logic for each part of the program. Code locations are in `src/` (e.g. `data_loader.rs`, `network.rs`, `main.rs`).
+
+---
+
+### Stage 1: Preparing a custom image
+
+Goal: convert an arbitrary image (e.g. photo or drawing of a digit) into the same format as MNIST — 28×28 grayscale, white digit on black background, digit centered — so the network can process it.
+
+1. Load the image from disk (e.g. PNG). → `create_from_img(path)`, `image::open(path)`
+2. Convert to grayscale (single channel 0–255). MNIST has no colour. → `prepare_mnist_image()`, `img.to_luma8()`
+3. Invert colours so the digit is white on black (MNIST convention). → `imageops::invert(&mut gray_img)`
+4. **Crop to content:** find the smallest rectangle that contains all "bright" pixels (value > 30). This removes empty borders. Add a 2-pixel margin on each side. → `crop_to_content()` in `data_loader.rs`
+5. Get the cropped region's width and height. Scale so the image **fits inside 20×20** while keeping aspect ratio (no squashing). E.g. 100×50 → 20×10. → `cropped.dimensions()`, then `(new_w, new_h)` with 20×20 fit logic
+6. Resize the cropped image to that size; apply a slight blur so edges look more like MNIST. → `imageops::resize()`, `imageops::blur()`
+7. Compute the **center of mass** of the digit (bright pixels "weigh" more). We want to place this point at the centre of the 28×28 canvas. → Loop over pixels: `sum_x += x * val`, same for y; `com = (sum_x, sum_y) / total_mass`
+8. Create a black 28×28 canvas. Draw the resized image on it so that its center of mass sits at (14, 14). Pixels that would fall outside 28×28 are clipped. Optionally boost brightness slightly. → `ImageBuffer::new(28, 28)`, loop with `target_x = x + x_offset`, bounds check, `put_pixel`
+9. Flatten the 28×28 image to 784 floats and normalize to [0, 1] (divide by 255). This is the same format as MNIST training vectors. → `create_from_img()` → `pixels().map(|p| p.0[0] as f32 / 255.0).collect()`
+
+**Entry point:** `data_loader::create_from_img("path.png")` returns `Vec<f32>` of length 784.
+
+---
+
+### Stage 2: Loading MNIST data
+
+Goal: load the official MNIST train/test sets from disk and convert them into in-memory vectors the network can use (normalized pixels + one-hot labels for training, digit labels for test).
+
+1. Read the four IDX files from `data/`: train images, train labels, test images, test labels. → `MnistBuilder::new().base_path("data").finalize()`
+2. Training images: each image is 28×28 = 784 bytes. Process in chunks of 784. Convert each pixel from 0..255 to 0.0..1.0. → `train_images.chunks(784)`, `map(|x| x as f32 / 255.0)`
+3. For each training sample, one-hot encode the label: digit 3 → `[0,0,0,1,0,0,0,0,0,0]`. Store pairs `(pixel_vec, one_hot_vec)`. → `vectorized_result(label)` in `MnistDataSet::new()`
+4. Test images: same pixel normalization. Keep the label as a single digit (0–9) for accuracy evaluation. Store pairs `(pixel_vec, label)`. → `test_data` in `MnistDataSet::new()`
+5. In `main`, convert `Vec<f32>` to `ndarray::Array1<f32>` for the network. Training: `Vec<(Array1, Array1)>`; test: `Vec<(Array1, u8)>`. → `map(|(img, lbl)| (Array1::from_vec(img), ...))`
+
+**Entry point:** `MnistDataSet::new()` populates `training_data` and `test_data`. `main.rs` then converts them to `Array1` and passes to the network.
+
+---
+
+### Stage 3: Training the network
+
+Goal: adjust weights and biases so that the network’s outputs (10 scores) match the one-hot targets on the training set. We use mini-batch SGD: small batches of samples, gradient computed per sample and averaged, then one update per batch.
+
+#### 3.1 Build the network
+
+1. Define architecture by layer sizes, e.g. `[784, 30, 10]`: 784 inputs (pixels), 30 hidden neurons, 10 outputs (one per digit). → `Network::new(&[784, 30, 10], learning_rate)`
+2. For each consecutive pair of sizes, create one layer: random weights and biases in [-1, 1). So we get two weight matrices: 784→30 and 30→10. → `Layer::new(sizes[i], sizes[i+1])` in a loop
+
+#### 3.2 One epoch of training
+
+One epoch = one full pass over the training set, in mini-batches.
+
+1. Shuffle the training data so batches are different every epoch. → `training_data.shuffle(&mut rng)` in `sgd()`
+2. Split the training data into chunks of size `mini_batch_size` (e.g. 32). Each chunk is one mini-batch. → `training_data.chunks(mini_batch_size)`
+3. For **each mini-batch**, run a single gradient step (see "One mini-batch step" below). → `update_mini_batch(batch)`
+4. (Optional) After the epoch, run the network on the test set and count how many samples are classified correctly (prediction = argmax of output). Print the count. → `evaluate(test_data)` in `sgd()`
+
+#### 3.3 One mini-batch step
+
+For one batch of (input, target) pairs:
+
+1. For **each sample** in the batch, run backpropagation: forward pass (cache activations and weighted sums), compute deltas δ for each layer, then compute gradients ∂C/∂w and ∂C/∂b. This can be done in parallel over samples. → `batch.par_iter().map(|(input, target)| self.backprop(...))`
+2. Sum the weight gradients and bias gradients over all samples in the batch. → Loop over `delta_grads`, add each layer's gradients to `total_grad_w`, `total_grad_b`
+3. Update every weight and bias: subtract `(learning_rate / batch_len) * total_gradient`. So we use the *average* gradient over the batch. → `weights.scaled_add(-step, &total_grad_w[l])`, same for biases
+
+#### 3.4 Backpropagation (per sample)
+
+For one (input, target) pair, `backprop()` does:
+
+1. **Forward:** Feed input through each layer; store each layer's output **a** and pre-sigmoid sum **z**. → `forward(network_input)` → `all_layers_outputs`, `all_weighted_sums`
+2. **Deltas:** Output layer: δ = (a − target) ⊙ σ'(z). Hidden layers (from last hidden backward): δ^l = (W^{l+1}ᵀ δ^{l+1}) ⊙ σ'(z^l). → `compute_deltas(...)`
+3. **Gradients:** ∂C/∂b = δ; ∂C/∂w = δ ⊗ a_prev (outer product). Return gradients for all layers. → `compute_gradients(layers_deltas, all_layers_outputs)`
+
+**Entry point:** `Network::sgd(training_data, epochs, mini_batch_size, Some(&test_data))` in `main.rs`.
+
+---
+
+### Stage 4: Inference
+
+Goal: given a single image (e.g. your custom 28×28 vector), run the network and get the predicted digit 0–9.
+
+1. Run a forward pass through all layers (no caching, no backward). Output is a vector of 10 activations (scores for digits 0–9). → `Network::predict(input.view())`
+2. The predicted digit is the **index** of the output with the highest value. E.g. if output[7] is largest, prediction is 7. → `Network::prediction_to_digit(prediction.view())`
+3. (Optional) Print the raw 10 scores and the predicted digit. → `main.rs`: `println!("Network predicts: {}", result)`
+
+**Entry point:** In `main.rs`, after training: `net.predict(my_digit.view())` and `Network::prediction_to_digit(prediction.view())`.
+
+---
+
+### Code map
+
+- **Custom image prep** — `data_loader.rs`: `create_from_img()`, `prepare_mnist_image()`, `crop_to_content()`
+- **MNIST loading** — `data_loader.rs`: `MnistDataSet::new()`, `vectorized_result()`
+- **Network build & training** — `network.rs`: `Network::new()`, `sgd()`, `update_mini_batch()`, `backprop()`, `forward()`, `compute_deltas()`, `compute_gradients()`
+- **Inference & main flow** — `main.rs`: `main()`, `visualise_number()`; calls into `data_loader` and `Network`
 
 ---
 
