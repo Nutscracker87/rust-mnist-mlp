@@ -254,4 +254,4 @@ $$
 
 ## Implementation note
 
-Weight indexing in code: `weights[neuron_j][input_k]` corresponds to $w^{(l)}_{jk}$ (connection from input index $k$ to neuron index $j$). This matches the formula $z_j = \sum_k w_{jk} a_k + b_j$.
+Weight indexing in code: `weights[neuron_j][input_k]` corresponds to $w^{(l)}\_{jk}$ (connection from input index $k$ to neuron index $j$). This matches the formula $z\_j = \sum\_k w\_{jk} a\_k + b\_j$.
