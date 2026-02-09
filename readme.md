@@ -120,7 +120,7 @@ For one batch of (input, target) pairs:
 For one (input, target) pair, `backprop()` does:
 
 1. **Forward:** Feed input through each layer; store each layer's output **a** and pre-sigmoid sum **z**. → `forward(network_input)` → `all_layers_outputs`, `all_weighted_sums`
-2. **Deltas:** Output layer: δ = (a − target) ⊙ σ'(z). Hidden layers (from last hidden backward): δ^l = (W^{l+1}ᵀ δ^{l+1}) ⊙ σ'(z^l). → `compute_deltas(...)`
+2. **Deltas:** Output layer: δ = (a − target) ⊙ σ'(z). Hidden layers (from last hidden backward): $\delta^l = (W^{l+1})^T \delta^{l+1} \odot \sigma'(z^l)$. → `compute_deltas(...)`
 3. **Gradients:** ∂C/∂b = δ; ∂C/∂w = δ ⊗ a_prev (outer product). Return gradients for all layers. → `compute_gradients(layers_deltas, all_layers_outputs)`
 
 **Entry point:** `Network::sgd(training_data, epochs, mini_batch_size, Some(&test_data))` in `main.rs`.
@@ -244,9 +244,9 @@ $$
 
 | Theory                                                                                       | Code                                         |
 | -------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| Forward:$z^l = W^l a^{l-1} + b^l$, $a^l = \sigma(z^l)$                                   | `forward()`, `Layer::calculate_output()` |
-| Output delta:$\delta^L = (a^L - t) \odot \sigma'(z^L)$                                     | `compute_deltas()` (output layer)          |
-| Hidden delta:$\delta^l = (W^{l+1})^T \delta^{l+1} \odot \sigma'(z^l)$                      | `compute_deltas()` (hidden loop)           |
+| Forward: $z^l = W^l a^{l-1} + b^l$, $a^l = \sigma(z^l)$                                  | `forward()`, `Layer::calculate_output()` |
+| Output delta: $\delta^L = (a^L - t) \odot \sigma'(z^L)$                                   | `compute_deltas()` (output layer)          |
+| Hidden delta: $\delta^l = (W^{l+1})^T \delta^{l+1} \odot \sigma'(z^l)$                    | `compute_deltas()` (hidden loop)           |
 | $\partial C/\partial b = \delta$, $\partial C/\partial w = \delta \cdot a^{\mathrm{in}}$ | `compute_gradients()`                      |
 | Mini-batch SGD update                                                                        | `update_mini_batch()`, `sgd()`           |
 
